@@ -1,0 +1,18 @@
+
+Project: Predicting Electric Vehicle (EV) Range using Machine Learning
+
+Dataset: /content/ElectricCarData_Clean.csv
+Target: Range_Km
+
+Model summary:
+- Best model chosen: Random Forest (after RandomizedSearch/GridSearch)
+- Test R2: 0.2912
+- Test MAE: 65.853
+- Test RMSE: 97.033
+
+Top features (from RandomForest):
+num__PriceEuro, num__TopSpeed_KmH, num__AccelSec, num__Efficiency_WhKm, cat__Segment_S, cat__Model_Roadster , cat__PowerTrain_FWD, cat__BodyStyle_Cabrio, cat__FastCharge_KmH_920, cat__Segment_F
+
+Conclusion:
+Higher battery capacity, lower energy consumption (Wh/km), lower vehicle weight, and better powertrain efficiency increase EV range. For improvement: add environment variables (temperature, terrain), try boosting (XGBoost), collect more data.
+
