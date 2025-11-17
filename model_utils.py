@@ -129,4 +129,20 @@ def predict_range(model=None, input_dict=None, input_df=None):
         else:
             raise AttributeError("Model has no predict/predict_proba/predict_range method.")
     return np.array(preds)
+    import pandas as pd
+import numpy as np
+
+def predict_range(model, input_dict):
+    """
+    Takes a dictionary of user inputs and returns model prediction.
+    """
+    # Convert the dictionary into a DataFrame
+    df = pd.DataFrame([input_dict])
+
+    # Predict using the model (sklearn pipeline)
+    prediction = model.predict(df)
+
+    # Return single value
+    return prediction[0]
+
 # ---------- End snippet ----------
