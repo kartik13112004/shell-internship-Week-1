@@ -4,6 +4,9 @@ import os
 import sys
 import traceback
 from joblib import load as joblib_load
+import joblib
+import pandas as pd
+import numpy as np
 
 # --- Compatibility monkeypatches for known missing sklearn private names ---
 # This must run BEFORE joblib.load() is called.
@@ -22,45 +25,37 @@ def _ensure_sklearn_compatibility():
                 pass
             setattr(ct, "_RemainderColsList", _RemainderColsList)
 
-    # add any other compatibility fallbacks here if needed:
-    # e.g. for very old pipelines you might need to create aliases for other names.
-
-# --- Model loader with helpful logging ---
+# ---------- model loading ----------
 def load_model(model_path="ev_range_model.joblib"):
     """
     Load the joblib model at model_path. If unpickling fails because of missing
     classes from sklearn, this function attempts compatibility fallbacks first.
+    Returns the loaded model object.
     """
-    # Ensure compatibility shims are present
+    # Ensure compatibility shims are present before importing/loading
     _ensure_sklearn_compatibility()
 
-    # Resolve absolute path (if the model sits in a folder, adjust accordingly)
-    abs_path = os.path.join(os.getcwd(), model_path) if not os.path.isabs(model_path) else model_path
+    # Resolve absolute path (relative to repository root)
+    base_dir = os.path.dirname(__file__)
+    abs_path = os.path.join(base_dir, model_path) if not os.path.isabs(model_path) else model_path
 
     if not os.path.exists(abs_path):
-        # helpful error for debugging in Streamlit logs
         raise FileNotFoundError(f"Model file not found at: {abs_path}")
 
     try:
-        # Use joblib to load the model
         model = joblib_load(abs_path)
         return model
     except Exception as ex:
-        # Print stacktrace to the logs so Streamlit's log viewer shows the full detail
         tb = traceback.format_exc()
-        # Re-raise a clear error so you see something in the app logs
+        # Provide a helpful error for logs
         raise RuntimeError(
             "Failed to load model via joblib.load(). See nested exception and logs.\n\n"
             f"Original exception:\n{ex}\n\nTraceback:\n{tb}"
         ) from ex
-# ---------- Add this to model_utils.py ----------
-import os
-import joblib
-import pandas as pd
-import numpy as np
 
+# ---------- feature-list helpers ----------
 def _load_feature_list():
-    """Load feature order if present (feature_list.pkl or feature_list.joblib)."""
+    """Load feature order if present (feature_list.pkl or .joblib). Returns list or None."""
     base = os.path.dirname(__file__)
     for name in ("feature_list.pkl", "feature_list.joblib", "feature_list.pkl.joblib"):
         path = os.path.join(base, name)
@@ -68,7 +63,6 @@ def _load_feature_list():
             try:
                 return joblib.load(path)
             except Exception:
-                # fallback to pickle if needed
                 import pickle
                 with open(path, "rb") as f:
                     return pickle.load(f)
@@ -83,66 +77,42 @@ def _prepare_input_df(input_dict=None, input_df=None):
     else:
         raise ValueError("Provide input_dict or input_df")
 
-    # reorder columns to the feature list if available
+    # If a feature order list exists, ensure columns match that order
     feature_list = _load_feature_list()
     if feature_list:
-        # ensure all features are present; missing set to NaN
+        # Add missing features as NaN and drop extra columns
         for feat in feature_list:
             if feat not in df.columns:
                 df[feat] = np.nan
         df = df.loc[:, feature_list]
+
     return df
 
+# ---------- prediction API ----------
 def predict_range(model=None, input_dict=None, input_df=None):
     """
-    Predict EV range using model.
-    - model: a loaded model object. If None, tries to call load_model() from this module.
+    Predict EV range.
+    - model: optional; sklearn pipeline or estimator. If None, will call load_model().
     - input_dict: dict of feature_name: value for single sample.
     - input_df: pandas.DataFrame for multiple samples.
-    Returns: numpy array of predictions.
+    Returns: numpy array of predictions (shape: (n_samples,)).
     """
-    # lazy-load model if not provided
+    # Lazy-load model if not provided
     if model is None:
-        # avoid circular import; import local load_model function
-        try:
-            from .model_utils import load_model as _lm  # for package-style import
-        except Exception:
-            try:
-                from model_utils import load_model as _lm  # fallback for direct script import
-            except Exception:
-                _lm = None
-        if _lm is None:
-            raise RuntimeError("No model provided and load_model() not found in model_utils.")
-        model = _lm()
+        model = load_model()
 
+    # Prepare DataFrame
     df = _prepare_input_df(input_dict=input_dict, input_df=input_df)
 
-    # If model is a sklearn pipeline or has .predict
+    # Use common prediction methods
     if hasattr(model, "predict"):
         preds = model.predict(df)
+    elif hasattr(model, "predict_proba"):
+        # fallback: if classification, choose probability of positive class
+        probs = model.predict_proba(df)
+        # If binary, take column 1; else take argmax expected use-case is regression so this is rare.
+        preds = probs[:, 1] if probs.shape[1] > 1 else probs[:, 0]
     else:
-        # try 'predict_proba' fallback or attribute 'predict_range' if custom
-        if hasattr(model, "predict_proba"):
-            preds = model.predict_proba(df)[:, 1]  # this is guessy; adapt if needed
-        elif hasattr(model, "predict_range"):
-            preds = model.predict_range(df)
-        else:
-            raise AttributeError("Model has no predict/predict_proba/predict_range method.")
-    return np.array(preds)
-    import pandas as pd
-import numpy as np
+        raise AttributeError("Model has no predict/predict_proba method.")
 
-def predict_range(model, input_dict):
-    """
-    Takes a dictionary of user inputs and returns model prediction.
-    """
-    # Convert the dictionary into a DataFrame
-    df = pd.DataFrame([input_dict])
-
-    # Predict using the model (sklearn pipeline)
-    prediction = model.predict(df)
-
-    # Return single value
-    return prediction[0]
-
-# ---------- End snippet ----------
+    return np.asarray(preds)
